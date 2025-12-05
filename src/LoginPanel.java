@@ -73,9 +73,6 @@ public class LoginPanel extends JPanel {
 
         c.gridx = 0; c.gridy = 0; c.anchor = GridBagConstraints.CENTER;
         add(card, c);
-        
-        // CATATAN: Baris getRootPane().setDefaultButton() DIHAPUS dari sini
-        // karena menyebabkan NullPointerException. Dipindah ke addNotify() di bawah.
     }
 
     /**
