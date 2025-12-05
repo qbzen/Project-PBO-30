@@ -1,37 +1,28 @@
 import java.awt.*;
 import java.sql.*;
+import java.util.concurrent.ExecutionException;
 import javax.swing.*;
 
-/**
- * LoginPanel - Panel antarmuka grafis untuk autentikasi admin.
- * Menggunakan background image kustom dan menempatkan form login di tengah.
- */
 public class LoginPanel extends JPanel {
 
-    // Bidang input username dan password
+    // Komponen Input
     private JTextField userField;
     private JPasswordField passField;
+    private JButton loginBtn; 
     
-    // Gambar background dimuat saat inisialisasi kelas
+    // Gambar background
     private final Image bg = new ImageIcon("assets/img/bg_login.png").getImage();
 
-    /**
-     * Konstruktor: Mengatur layout utama dan membangun form login card.
-     */
     public LoginPanel() {
-        // Mengatur layout utama GridBagLayout untuk menengahkan komponen
         setLayout(new GridBagLayout());
-        
-        // Menerapkan padding default ke panel utama
         UIConstants.applyDefaultPadding(this);
 
         GridBagConstraints c = new GridBagConstraints();
         c.insets = new Insets(UIConstants.PADDING, UIConstants.PADDING, UIConstants.PADDING, UIConstants.PADDING);
         c.fill = GridBagConstraints.HORIZONTAL;
 
-        // --- LOGIN CARD: Kontainer form dengan style card ---
+        // --- LOGIN CARD ---
         JPanel card = new JPanel(new GridBagLayout());
-        // Menerapkan gaya card (background putih dan border) agar kontras dengan background image
         UIConstants.styleCardPanel(card); 
         
         GridBagConstraints cc = new GridBagConstraints();
@@ -41,111 +32,134 @@ public class LoginPanel extends JPanel {
 
         int row = 0;
 
-        // Label Judul "LOGIN ADMIN"
+        // Label Judul
         JLabel title = new JLabel("LOGIN ADMIN", SwingConstants.CENTER);
         UIConstants.applyHeaderLabel(title); 
-        cc.gridx = 0;
-        cc.gridy = row;
-        cc.gridwidth = 2; // Span dua kolom
-        cc.anchor = GridBagConstraints.CENTER;
+        cc.gridx = 0; cc.gridy = row; cc.gridwidth = 2; cc.anchor = GridBagConstraints.CENTER;
         card.add(title, cc);
         row++;
 
-        cc.gridwidth = 1; // Kembali ke satu kolom
+        cc.gridwidth = 1; 
 
-        // Label dan Input Username
-        cc.gridx = 0;
-        cc.gridy = row;
-        cc.weightx = 0.0;
-        JLabel userLabel = new JLabel("Username:");
-        UIConstants.applyBodyLabel(userLabel);
+        // Input Username
+        cc.gridx = 0; cc.gridy = row; cc.weightx = 0.0;
+        JLabel userLabel = new JLabel("Username:"); UIConstants.applyBodyLabel(userLabel);
         card.add(userLabel, cc);
 
-        userField = new JTextField(20);
-        UIConstants.styleTextField(userField);
-        cc.gridx = 1;
-        cc.weightx = 1.0;
+        userField = new JTextField(20); UIConstants.styleTextField(userField);
+        cc.gridx = 1; cc.weightx = 1.0;
         card.add(userField, cc);
         row++;
 
-        // Label dan Input Password
-        cc.gridx = 0;
-        cc.gridy = row;
-        cc.weightx = 0.0;
-        JLabel passLabel = new JLabel("Password:");
-        UIConstants.applyBodyLabel(passLabel);
+        // Input Password
+        cc.gridx = 0; cc.gridy = row; cc.weightx = 0.0;
+        JLabel passLabel = new JLabel("Password:"); UIConstants.applyBodyLabel(passLabel);
         card.add(passLabel, cc);
 
-        passField = new JPasswordField(20);
-        UIConstants.stylePasswordField(passField);
-        cc.gridx = 1;
-        cc.weightx = 1.0;
+        passField = new JPasswordField(20); UIConstants.stylePasswordField(passField);
+        cc.gridx = 1; cc.weightx = 1.0;
         card.add(passField, cc);
         row++;
 
-        // Tombol Login (centered, span dua kolom)
-        JButton login = new JButton("Login");
-        UIConstants.stylePrimaryButton(login);
-        // Menambahkan action listener untuk proses login
-        login.addActionListener(a -> loginAction());
-        cc.gridx = 0;
-        cc.gridy = row;
-        cc.gridwidth = 2;
-        cc.weightx = 0.0;
-        cc.anchor = GridBagConstraints.CENTER;
-        card.add(login, cc);
+        // Tombol Login
+        loginBtn = new JButton("Login");
+        UIConstants.stylePrimaryButton(loginBtn);
+        
+        // Action Listener
+        loginBtn.addActionListener(a -> doLoginWithThread());
+        
+        cc.gridx = 0; cc.gridy = row; cc.gridwidth = 2; cc.weightx = 0.0; cc.anchor = GridBagConstraints.CENTER;
+        card.add(loginBtn, cc);
 
-        // Menambahkan card ke panel utama, menempatkannya di tengah
-        c.gridx = 0;
-        c.gridy = 0;
-        c.anchor = GridBagConstraints.CENTER;
+        c.gridx = 0; c.gridy = 0; c.anchor = GridBagConstraints.CENTER;
         add(card, c);
+        
+        // CATATAN: Baris getRootPane().setDefaultButton() DIHAPUS dari sini
+        // karena menyebabkan NullPointerException. Dipindah ke addNotify() di bawah.
     }
 
     /**
-     * Override method untuk menggambar background image, 
-     * memastikan gambar di-scale sesuai ukuran panel.
+     * Override addNotify:
+     * Method ini dipanggil otomatis oleh Java saat Panel ditambahkan ke JFrame (Window).
      */
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        JRootPane rootPane = SwingUtilities.getRootPane(this);
+        if (rootPane != null) {
+            rootPane.setDefaultButton(loginBtn); // ENTER key trigger login
+        }
+    }
+
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         if (bg != null) {
-            // Menggambar background image, di-scale agar memenuhi seluruh area panel
             g.drawImage(bg, 0, 0, getWidth(), getHeight(), this);
         }
     }
 
-    /**
-     * Menjalankan logika autentikasi admin ke database.
-     */
-    private void loginAction() {
-        // Menggunakan try-with-resources untuk memastikan koneksi ditutup
-        try (Connection conn = DB.getConnection()) {
+    private void doLoginWithThread() {
+        String user = userField.getText().trim();
+        String pass = new String(passField.getPassword());
 
-            // Query SQL untuk mencari username dan password yang cocok
-            PreparedStatement ps = conn.prepareStatement(
-                    "SELECT username FROM users WHERE username=? AND password=?");
+        if (user.isEmpty() || pass.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Username dan Password harus diisi!");
+            return;
+        }
 
-            // Mengatur parameter PreparedStatement
-            ps.setString(1, userField.getText().trim());
-            ps.setString(2, new String(passField.getPassword()));
+        // 1. UI Preparation (EDT)
+        loginBtn.setEnabled(false);
+        loginBtn.setText("Authenticating...");
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
 
-            ResultSet rs = ps.executeQuery();
+        // 2. Background Task
+        SwingWorker<String, Void> worker = new SwingWorker<>() {
+            @Override
+            protected String doInBackground() throws Exception {
+                try (Connection conn = DB.getConnection()) {
+                    PreparedStatement ps = conn.prepareStatement(
+                            "SELECT username FROM users WHERE username=? AND password=?");
+                    ps.setString(1, user);
+                    ps.setString(2, pass);
 
-            if (rs.next()) {
-                // Login berhasil: Mengambil username, membuat LandingPanel, dan navigasi
-                String username = rs.getString("username");
-                LandingPanel landing = new LandingPanel();
-                landing.setAdminName(username); // Mengatur nama admin di LandingPanel
-                Main.setPanel(landing); // Navigasi ke LandingPanel
-            } else {
-                // Login gagal: Menampilkan pesan error
-                JOptionPane.showMessageDialog(this, "Username atau password salah!");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            return rs.getString("username");
+                        }
+                    }
+                }
+                return null;
             }
 
-        } catch (Exception e) {
-            // Menampilkan pesan error jika terjadi masalah koneksi/SQL
-            JOptionPane.showMessageDialog(this, "Error: " + e.getMessage());
-        }
+            @Override
+            protected void done() {
+                try {
+                    String adminName = get(); 
+                    
+                    if (adminName != null) {
+                        LandingPanel landing = new LandingPanel();
+                        landing.setAdminName(adminName);
+                        Main.setPanel(landing, "Home");
+                    } else {
+                        JOptionPane.showMessageDialog(LoginPanel.this, 
+                            "Username atau password salah!", "Login Failed", JOptionPane.ERROR_MESSAGE);
+                        passField.setText("");
+                        passField.requestFocus();
+                    }
+                    
+                } catch (InterruptedException | ExecutionException e) {
+                    JOptionPane.showMessageDialog(LoginPanel.this, 
+                        "Database Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    e.printStackTrace();
+                } finally {
+                    loginBtn.setEnabled(true);
+                    loginBtn.setText("Login");
+                    setCursor(Cursor.getDefaultCursor());
+                }
+            }
+        };
+
+        worker.execute(); 
     }
 }
