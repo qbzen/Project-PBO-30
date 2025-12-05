@@ -9,10 +9,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * PayrollService - Core Logic.
- * Bertanggung jawab atas perhitungan, penyimpanan, dan pengambilan data transaksi penggajian.
- */
 public class PayrollService {
     
     private final EmployeeRepository repo = new EmployeeRepository();
@@ -38,7 +34,7 @@ public class PayrollService {
         }
     }
 
-    // [BARU] DTO untuk menampung info log pembayaran (Who & When)
+    // untuk menampung info log pembayaran (Who & When)
     public static class PaymentLogInfo {
         public final String paidBy;
         public final String paidAt;
