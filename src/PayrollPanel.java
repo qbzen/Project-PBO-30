@@ -1,43 +1,30 @@
-import java.awt.BorderLayout;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.Font;
-import java.awt.Graphics;
-import java.awt.GridBagConstraints;
-import java.awt.GridBagLayout;
-import java.awt.Image;
-import java.awt.Insets;
+import java.awt.*;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-
-import javax.swing.BorderFactory;
-import javax.swing.Box;
-import javax.swing.ImageIcon;
-import javax.swing.JButton;
-import javax.swing.JComboBox;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JTable;
-import javax.swing.SwingConstants;
+import java.util.concurrent.ExecutionException;
+import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
 /**
- * PayrollPanel - Final Version.
- * - Logic perhitungan & akses DB dipindah ke Service/Repo.
- * - UI hanya bertugas menampilkan data (View).
- * - UPDATE: Tidak menampilkan karyawan dengan gaji 0.
+ * PayrollPanel - Multi-threaded Version (SwingWorker).
+ * - Mencegah UI Freeze saat memuat data atau melakukan pembayaran.
+ * - [UPDATED] Fitur Sort ID/Nama di atas tabel (Default ID).
+ * - Filter tombol lebar (Navy) di panel kiri.
  */
 public class PayrollPanel extends JPanel {
     private JComboBox<Integer> yearBox;
     private JComboBox<Integer> monthBox;
     private JComboBox<String> typeCombo;
     private JComboBox<String> golonganCombo;
+    private JTextField searchNameField; 
     private JLabel golLbl;
+    private JComboBox<String> sortBox; // [BARU] Dropdown Sort
+    
     private DefaultTableModel model;
     private JLabel totalAllLabel;
+    private JButton payBtn; 
     
     private final PayrollService payrollService = new PayrollService();
     private final EmployeeRepository empRepo = new EmployeeRepository();
@@ -56,7 +43,7 @@ public class PayrollPanel extends JPanel {
         gbc.fill = GridBagConstraints.BOTH;
         gbc.weighty = 1.0; 
 
-        // --- LEFT CARD ---
+        // --- LEFT CARD (FILTER) ---
         JPanel leftCard = new JPanel(new GridBagLayout()) {
             private final Image bg = new ImageIcon("assets/img/bg_payroll_filter.png").getImage();
             @Override
@@ -83,7 +70,7 @@ public class PayrollPanel extends JPanel {
         row++;
         fc.insets = new Insets(8, 5, 8, 5); fc.gridwidth = 1;
 
-        // Input Tahun
+        // 1. Input Tahun
         fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
         JLabel tahunLbl = new JLabel("Tahun:"); UIConstants.applyBodyLabel(tahunLbl);
         formPanel.add(tahunLbl, fc);
@@ -96,7 +83,7 @@ public class PayrollPanel extends JPanel {
         formPanel.add(yearBox, fc);
         row++;
 
-        // Input Bulan
+        // 2. Input Bulan
         fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
         JLabel bulanLbl = new JLabel("Bulan:"); UIConstants.applyBodyLabel(bulanLbl);
         formPanel.add(bulanLbl, fc);
@@ -109,11 +96,24 @@ public class PayrollPanel extends JPanel {
         formPanel.add(monthBox, fc);
         row++;
 
+        // Spacer
         fc.gridx = 0; fc.gridy = row; fc.gridwidth = 2;
         formPanel.add(Box.createRigidArea(new Dimension(0, 10)), fc);
         row++; fc.gridwidth = 1;
 
-        // Input Tipe
+        // 3. Input Search Nama
+        fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
+        JLabel searchLbl = new JLabel("Nama:"); UIConstants.applyBodyLabel(searchLbl);
+        formPanel.add(searchLbl, fc);
+
+        fc.gridx = 1; fc.weightx = 1.0;
+        searchNameField = new JTextField();
+        try { UIConstants.styleTextField(searchNameField); } catch (Exception ignored) { searchNameField.setFont(UIConstants.BODY_FONT); }
+        searchNameField.addActionListener(e -> { if (!isInitializing) loadPayroll(); }); 
+        formPanel.add(searchNameField, fc);
+        row++;
+
+        // 4. Input Tipe
         fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
         JLabel tipeLbl = new JLabel("Tipe:"); UIConstants.applyBodyLabel(tipeLbl);
         formPanel.add(tipeLbl, fc);
@@ -124,7 +124,7 @@ public class PayrollPanel extends JPanel {
         formPanel.add(typeCombo, fc);
         row++;
 
-        // Input Golongan
+        // 5. Input Golongan
         fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
         golLbl = new JLabel("Golongan:"); UIConstants.applyBodyLabel(golLbl);
         formPanel.add(golLbl, fc);
@@ -135,12 +135,31 @@ public class PayrollPanel extends JPanel {
         formPanel.add(golonganCombo, fc);
         row++;
 
+        // 6. Tombol Filter (Full Width)
+        fc.gridx = 0; fc.gridy = row; 
+        fc.gridwidth = 2; 
+        fc.fill = GridBagConstraints.HORIZONTAL; 
+        fc.insets = new Insets(10, 5, 10, 5); 
+
+        JButton filterBtn = new JButton("Filter");
+        UIConstants.stylePrimaryButton(filterBtn);
+        filterBtn.setBackground(UIConstants.NAVY);
+        filterBtn.setFont(UIConstants.BOLD_BODY_FONT.deriveFont(12f));
+        filterBtn.addActionListener(e -> loadPayroll());
+        
+        formPanel.add(filterBtn, fc);
+        
+        fc.fill = GridBagConstraints.HORIZONTAL;
+        fc.insets = new Insets(8, 5, 8, 5);
+        fc.gridwidth = 1; 
+        row++;
+
         leftCard.add(formPanel);
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.25; 
         gbc.insets = new Insets(0, 0, 0, 15);
         main.add(leftCard, gbc);
 
-        // --- RIGHT CARD ---
+        // --- RIGHT CARD (TABLE) ---
         JPanel rightCard = new JPanel(new BorderLayout()) {
             private final Image bg = new ImageIcon("assets/img/bg_table.png").getImage();
             @Override
@@ -151,11 +170,32 @@ public class PayrollPanel extends JPanel {
         };
         UIConstants.styleCardPanel(rightCard);
         
+        // --- [UPDATED] Header Panel (Title + Sort) ---
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        headerPanel.setOpaque(false);
+        headerPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+
         JLabel tableHeader = new JLabel("Daftar Gaji Pending (Karyawan Aktif)", SwingConstants.LEFT);
         tableHeader.setFont(UIConstants.BOLD_BODY_FONT);
-        tableHeader.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
-        rightCard.add(tableHeader, BorderLayout.NORTH);
+        headerPanel.add(tableHeader, BorderLayout.WEST);
 
+        // Sort Control
+        JPanel sortPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        sortPanel.setOpaque(false);
+        JLabel sortLbl = new JLabel("Sort:");
+        UIConstants.applyBodyLabel(sortLbl);
+        sortPanel.add(sortLbl);
+
+        sortBox = new JComboBox<>(new String[]{"ID", "Nama"});
+        sortBox.setFont(UIConstants.BODY_FONT);
+        // Trigger reload (sorting happens in populateTable)
+        sortBox.addActionListener(e -> { if (!isInitializing) loadPayroll(); });
+        sortPanel.add(sortBox);
+
+        headerPanel.add(sortPanel, BorderLayout.EAST);
+        rightCard.add(headerPanel, BorderLayout.NORTH);
+
+        // Table
         model = new DefaultTableModel(new String[]{"ID", "Nama", "Tipe", "Gol", "Base", "Overtime", "Hari", "Rate", "Total"}, 0) {
             @Override public boolean isCellEditable(int row, int col) { return false; }
         };
@@ -198,7 +238,7 @@ public class PayrollPanel extends JPanel {
         
         JPanel payPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         payPanel.setOpaque(false);
-        JButton payBtn = new JButton("Bayarkan");
+        payBtn = new JButton("Bayarkan");
         UIConstants.stylePrimaryButton(payBtn);
         payBtn.addActionListener(a -> confirmAndPayVisible());
         payPanel.add(payBtn);
@@ -225,70 +265,100 @@ public class PayrollPanel extends JPanel {
         }
     }
 
+    // --- SWING WORKER IMPLEMENTATION FOR LOADING DATA ---
     private void loadPayroll() {
-        model.setRowCount(0);
-        
-        // Reset Total setiap kali load ulang
-        totalAllLabel.setText("Total Gaji: " + UIConstants.formatRupiah(0));
-        
         if (yearBox.getSelectedItem() == null || monthBox.getSelectedItem() == null) return;
         
         int year = (int) yearBox.getSelectedItem();
         int month = (int) monthBox.getSelectedItem();
-        
+
+        // 1. UI Preparation (EDT)
+        model.setRowCount(0);
+        totalAllLabel.setText("Total Gaji: " + UIConstants.formatRupiah(0));
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR)); 
+
+        // 2. Background Task
+        SwingWorker<List<PayrollService.PayrollRow>, Void> worker = new SwingWorker<>() {
+            private double partTimeRate = 0;
+
+            @Override
+            protected List<PayrollService.PayrollRow> doInBackground() throws Exception {
+                // Proses Berat: Koneksi DB dan Kalkulasi Gaji
+                partTimeRate = empRepo.getPartTimeDailyRate();
+                return payrollService.calculateAll(year, month);
+            }
+
+            @Override
+            protected void done() {
+                // 3. UI Update (EDT)
+                try {
+                    List<PayrollService.PayrollRow> rows = get(); 
+                    populateTable(rows, partTimeRate, year, month);
+                } catch (InterruptedException | ExecutionException e) {
+                    JOptionPane.showMessageDialog(PayrollPanel.this, "Error load data: " + e.getMessage());
+                    e.printStackTrace();
+                } finally {
+                    setCursor(Cursor.getDefaultCursor()); 
+                }
+            }
+        };
+
+        worker.execute(); 
+    }
+
+    private void populateTable(List<PayrollService.PayrollRow> rows, double partTimeRate, int year, int month) {
         String typeFilter = (String) typeCombo.getSelectedItem();
         String golFilter = (String) golonganCombo.getSelectedItem();
+        String searchKeyword = searchNameField.getText().trim().toLowerCase();
+        
+        // [BARU] Sort Logic
+        String sortMode = (String) sortBox.getSelectedItem();
+        if ("Nama".equals(sortMode)) {
+            rows.sort(Comparator.comparing(r -> r.name, String::compareToIgnoreCase));
+        } else {
+            rows.sort(Comparator.comparingInt(r -> r.id));
+        }
         
         long totalPendingDisplayed = 0L;
 
-        try {
-            List<PayrollService.PayrollRow> rows = payrollService.calculateAll(year, month);
-            double partTimeRate = empRepo.getPartTimeDailyRate();
+        for (PayrollService.PayrollRow r : rows) {
+            String status = payrollService.getPayrollStatus(r.id, year, month);
+            if ("PAID".equalsIgnoreCase(status)) continue; 
 
-            for (PayrollService.PayrollRow r : rows) {
-                // 1. Cek Status
-                String status = payrollService.getPayrollStatus(r.id, year, month);
-                if ("PAID".equalsIgnoreCase(status)) continue; 
+            if (r.total <= 0) continue;
 
-                // 2. Filter Gaji > 0 (Hanya tampilkan jika ada yang perlu dibayar)
-                if (r.total <= 0) continue;
+            Integer gol = payrollService.getGolonganForEmployee(r.id);
+            
+            // Logic Filter
+            boolean okType = typeFilter.equals("All") || r.type.equalsIgnoreCase(typeFilter);
+            boolean okGol = golFilter.equals("All") || (gol != null && String.valueOf(gol).equals(golFilter));
+            boolean okName = searchKeyword.isEmpty() || r.name.toLowerCase().contains(searchKeyword);
 
-                // 3. Filter UI
-                Integer gol = payrollService.getGolonganForEmployee(r.id);
-                boolean okType = typeFilter.equals("All") || r.type.equalsIgnoreCase(typeFilter);
-                boolean okGol = golFilter.equals("All") || (gol != null && String.valueOf(gol).equals(golFilter));
-
-                if (okType && okGol) {
-                    long totalRounded = Math.round(r.total);
-                    String hariStr = "-";
-                    String rateStr = "-";
-                    
-                    if ("PARTTIME".equalsIgnoreCase(r.type)) {
-                        hariStr = String.valueOf(r.daysWorked);
-                        rateStr = UIConstants.formatRupiah(partTimeRate);
-                    }
-                    
-                    model.addRow(new Object[]{
-                            r.id, r.name, r.type, (gol == null ? "-" : gol),
-                            UIConstants.formatRupiah(r.base), 
-                            UIConstants.formatRupiah(r.overtime),
-                            hariStr, rateStr, 
-                            UIConstants.formatRupiah(totalRounded)
-                    });
-                    
-                    totalPendingDisplayed += totalRounded;
+            if (okType && okGol && okName) {
+                long totalRounded = Math.round(r.total);
+                String hariStr = "-";
+                String rateStr = "-";
+                
+                if ("PARTTIME".equalsIgnoreCase(r.type)) {
+                    hariStr = String.valueOf(r.daysWorked);
+                    rateStr = UIConstants.formatRupiah(partTimeRate);
                 }
+                
+                model.addRow(new Object[]{
+                        r.id, r.name, r.type, (gol == null ? "-" : gol),
+                        UIConstants.formatRupiah(r.base), 
+                        UIConstants.formatRupiah(r.overtime),
+                        hariStr, rateStr, 
+                        UIConstants.formatRupiah(totalRounded)
+                });
+                
+                totalPendingDisplayed += totalRounded;
             }
-            
-            // Update Label Total
-            totalAllLabel.setText("Total Gaji: " + UIConstants.formatRupiah(totalPendingDisplayed));
-            
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Error load: " + e.getMessage()); 
-            e.printStackTrace();
         }
+        totalAllLabel.setText("Total Gaji: " + UIConstants.formatRupiah(totalPendingDisplayed));
     }
 
+    // --- SWING WORKER IMPLEMENTATION FOR PAYING ---
     private void confirmAndPayVisible() {
         int rowCount = model.getRowCount();
         if (rowCount == 0) {
@@ -315,13 +385,34 @@ public class PayrollPanel extends JPanel {
         int confirm = JOptionPane.showConfirmDialog(this, msg, "Konfirmasi Pembayaran", JOptionPane.YES_NO_OPTION);
         
         if (confirm == JOptionPane.YES_OPTION) {
-            try {
-                int paid = payrollService.paySelected(idsToPay, year, month, currentAdminName, "MANUAL", "");
-                JOptionPane.showMessageDialog(this, "Berhasil bayar " + paid + " karyawan.");
-                loadPayroll();
-            } catch (Exception e) {
-                JOptionPane.showMessageDialog(this, "Error: " + e.getMessage()); e.printStackTrace();
-            }
+            payBtn.setEnabled(false);
+            payBtn.setText("Processing...");
+            setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+
+            SwingWorker<Integer, Void> worker = new SwingWorker<>() {
+                @Override
+                protected Integer doInBackground() throws Exception {
+                    return payrollService.paySelected(idsToPay, year, month, currentAdminName, "MANUAL", "");
+                }
+
+                @Override
+                protected void done() {
+                    try {
+                        int paid = get();
+                        JOptionPane.showMessageDialog(PayrollPanel.this, "Berhasil bayar " + paid + " karyawan.");
+                        loadPayroll(); 
+                    } catch (InterruptedException | ExecutionException e) {
+                        JOptionPane.showMessageDialog(PayrollPanel.this, "Error: " + e.getMessage());
+                        e.printStackTrace();
+                    } finally {
+                        payBtn.setEnabled(true);
+                        payBtn.setText("Bayarkan");
+                        setCursor(Cursor.getDefaultCursor());
+                    }
+                }
+            };
+            
+            worker.execute(); 
         }
     }
 }
