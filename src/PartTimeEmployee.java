@@ -24,7 +24,9 @@ public class PartTimeEmployee extends Employee {
             }
         }
         
-
+        // 2. Ambil Rate Harian
+        // KITA GANTI: Tidak lagi panggil DB.getPartTimeDailyRate() karena method itu sudah dihapus.
+        // Kita query langsung ke app_settings di sini.
         double rate = 100_000.0; // Default fallback
         try (PreparedStatement ps = conn.prepareStatement("SELECT setting_value FROM app_settings WHERE setting_key='PARTTIME_DAILY_RATE'")) {
              try(ResultSet rs = ps.executeQuery()) {
