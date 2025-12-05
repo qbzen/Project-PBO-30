@@ -11,23 +11,24 @@ import java.util.Map;
 
 public class FullTimeEmployee extends Employee {
     private double baseSalary;
-    
+
     public FullTimeEmployee(int id, String name, double baseSalary, boolean isActive) {
         super(id, name, "FULLTIME", isActive);
         this.baseSalary = baseSalary;
     }
 
+    public double getBaseSalary() { return baseSalary; }
+
+    /**
+     * Helper: Hitung upah lembur per jam (1/173 x Gaji Pokok).
+     */
     private double getHourlyRate() {
         if (baseSalary <= 0) return 0;
-        return baseSalary / 173.0; // 1/173 dikali upah sebulan
+        return baseSalary / 173.0;
     }
 
     /**
-     * Menghitung total bayaran lembur per hari menggunakan tarif berjenjang.
-     * Tarif sesuai UU Ketenagakerjaan (disederhanakan untuk Hari Kerja/Hari Libur).
-     * @param hours Total jam lembur pada hari tersebut.
-     * @param isHoliday Status apakah hari tersebut adalah hari libur (weekend/libur nasional).
-     * @return Total bayaran lembur.
+     * Helper: Logika tarif lembur berjenjang (Hari Kerja vs Hari Libur).
      */
     private double calculateOvertimePay(double hours, boolean isHoliday) {
         if (hours <= 0) return 0;
@@ -36,34 +37,25 @@ public class FullTimeEmployee extends Employee {
         double pay = 0.0;
         
         if (!isHoliday) {
-            // --- HARI KERJA ---
-            // Jam pertama: 1.5x upah per jam
+            // Hari Kerja: 1.5x jam pertama, 2x jam berikutnya
             pay += Math.min(hours, 1) * 1.5 * hourlyRate;
-            
-            // Jam kedua dan seterusnya: 2x upah per jam
             double remainingHours = hours - 1;
             if (remainingHours > 0) {
                 pay += remainingHours * 2.0 * hourlyRate;
             }
-            
         } else {
-            // --- HARI LIBUR ---
-            
-            // Jam 1 s/d 7: 2x upah per jam
+            // Hari Libur: 2x (7 jam pertama), 3x (jam ke-8), 4x (jam ke-9 dst)
             double hoursPhase1 = Math.min(hours, 7);
             pay += hoursPhase1 * 2.0 * hourlyRate;
             
-            // Jam ke-8: 3x upah per jam
             double hoursPhase2 = Math.min(Math.max(0, hours - 7), 1);
             pay += hoursPhase2 * 3.0 * hourlyRate;
             
-            // Jam ke-9 dan seterusnya: 4x upah per jam
             double hoursPhase3 = Math.max(0, hours - 8);
             if (hoursPhase3 > 0) {
                 pay += hoursPhase3 * 4.0 * hourlyRate;
             }
         }
-        
         return pay;
     }
 
@@ -72,10 +64,7 @@ public class FullTimeEmployee extends Employee {
         // Query hanya mengambil data lembur
         String sql = "SELECT ot_date, start_time, end_time FROM overtime_entries WHERE employee_id=? AND YEAR(ot_date)=? AND MONTH(ot_date)=?";
         
-        // Peta untuk mengagregasi total jam lembur per hari
         Map<LocalDate, Double> totalHoursPerDay = new HashMap<>(); 
-        
-        // Peta untuk menyimpan status libur per tanggal (asumsi weekend/isWeekend adalah Hari Libur)
         Map<LocalDate, Boolean> holidayStatus = new HashMap<>();
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -93,15 +82,12 @@ public class FullTimeEmployee extends Employee {
                     LocalTime start = s.toLocalTime();
                     LocalTime end = e.toLocalTime();
                     
-                    // Hitung durasi jam
                     long minutes = Duration.between(start, end).toMinutes();
                     if (minutes <= 0) continue;
                     double hours = minutes / 60.0;
                     
-                    // Agregasi jam
                     totalHoursPerDay.merge(date, hours, Double::sum); 
                     
-                    // Tentukan status libur (isWeekend di OvertimeEntry.java)
                     boolean isWeekend = date.getDayOfWeek() == java.time.DayOfWeek.SATURDAY || date.getDayOfWeek() == java.time.DayOfWeek.SUNDAY;
                     holidayStatus.put(date, isWeekend); 
                 }
@@ -110,11 +96,9 @@ public class FullTimeEmployee extends Employee {
         
         double overtimePay = 0.0;
         
-        // Hitung bayaran dengan tarif spesifik per hari
         for (Map.Entry<LocalDate, Double> entry : totalHoursPerDay.entrySet()) {
             LocalDate date = entry.getKey();
             double hours = entry.getValue();
-            // Gunakan status Hari Libur yang sudah ditentukan
             boolean isHoliday = holidayStatus.getOrDefault(date, false);
             
             overtimePay += calculateOvertimePay(hours, isHoliday); 
@@ -123,13 +107,8 @@ public class FullTimeEmployee extends Employee {
         return baseSalary + overtimePay;
     }
 
-    public double getBaseSalary() { return baseSalary; }
-    
-   
-    public void setBaseSalary(double baseSalary) {
-        if (baseSalary < 0) {
-            throw new IllegalArgumentException("Gaji pokok tidak boleh negatif.");
-        }
-        this.baseSalary = baseSalary;
+    @Override
+    public SalaryComponents getSalaryComponents(double totalPay, int standardDays, double partTimeRate) {
+        return new SalaryComponents(baseSalary, totalPay - baseSalary, standardDays);
     }
 }
