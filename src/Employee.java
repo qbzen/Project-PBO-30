@@ -2,7 +2,6 @@ import java.sql.Connection;
 
 /**
  * Employee - Kelas abstrak dasar (Superclass).
- * Updated: Menggunakan Enum untuk Tipe dan Polimorfisme untuk komponen gaji.
  */
 public abstract class Employee {
     
