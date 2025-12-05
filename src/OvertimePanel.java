@@ -1,15 +1,12 @@
 import java.awt.*;
 import java.sql.*;
 import java.time.*;
+import java.util.Comparator;
 import java.util.List;
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
-/**
- * OvertimePanel - Panel Input Lembur & Hari Kerja.
- * - Menggunakan Repository untuk mengambil data karyawan & lembur.
- */
 public class OvertimePanel extends JPanel {
 
     // --- COMPONENTS ---
@@ -18,9 +15,10 @@ public class OvertimePanel extends JPanel {
     private JComboBox<Integer> inputDayBox;
     private JLabel inputDayLbl;
 
+    // Filter Table Components
     private JComboBox<Integer> filterYearBox;
     private JComboBox<Integer> filterMonthBox;
-    private JComboBox<String> filterDayBox; 
+    private JComboBox<String> sortBox; // [BARU] Dropdown Sort
 
     private JTextField nameField;
     private JButton checkBtn;
@@ -112,32 +110,36 @@ public class OvertimePanel extends JPanel {
         JPanel filter = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 8));
         filter.setOpaque(false); 
 
+        // Filter Tahun
         filterYearBox = new JComboBox<>();
         int nowY = LocalDate.now().getYear();
         for (int y = nowY - 3; y <= nowY + 3; y++) filterYearBox.addItem(y);
         filterYearBox.setSelectedItem(nowY);
         filterYearBox.setFont(UIConstants.BODY_FONT);
 
+        // Filter Bulan
         filterMonthBox = new JComboBox<>();
         for (int m = 1; m <= 12; m++) filterMonthBox.addItem(m);
         filterMonthBox.setSelectedItem(LocalDate.now().getMonthValue());
         filterMonthBox.setFont(UIConstants.BODY_FONT);
 
-        filterDayBox = new JComboBox<>(new DefaultComboBoxModel<>());
-        filterDayBox.setFont(UIConstants.BODY_FONT);
-        filterDayBox.setPrototypeDisplayValue("All");
+        // [BARU] Sort By Box
+        sortBox = new JComboBox<>(new String[]{"ID", "Nama"});
+        sortBox.setFont(UIConstants.BODY_FONT);
+        sortBox.setSelectedIndex(0); // Default ID
         
-        filterYearBox.addActionListener(a -> { fillFilterDayBox(); loadTableData(); });
-        filterMonthBox.addActionListener(a -> { fillFilterDayBox(); loadTableData(); });
-        filterDayBox.addActionListener(a -> { if (filterDayBox.getSelectedItem() != null) loadTableData(); });
+        // Listeners
+        filterYearBox.addActionListener(a -> loadTableData());
+        filterMonthBox.addActionListener(a -> loadTableData());
+        sortBox.addActionListener(a -> loadTableData());
 
         JLabel yLbl = new JLabel("Tahun:"); UIConstants.applyBodyLabel(yLbl);
         JLabel mLbl = new JLabel("Bulan:"); UIConstants.applyBodyLabel(mLbl);
-        JLabel dLbl = new JLabel("Tanggal:"); UIConstants.applyBodyLabel(dLbl);
+        JLabel sLbl = new JLabel("Sort:"); UIConstants.applyBodyLabel(sLbl);
 
         filter.add(yLbl); filter.add(filterYearBox);
         filter.add(mLbl); filter.add(filterMonthBox);
-        filter.add(dLbl); filter.add(filterDayBox);
+        filter.add(sLbl); filter.add(sortBox); // Add Sort Box
 
         header.add(filter, BorderLayout.EAST);
         card.add(header, BorderLayout.NORTH);
@@ -161,7 +163,6 @@ public class OvertimePanel extends JPanel {
         sp.setBorder(BorderFactory.createEmptyBorder());
         card.add(sp, BorderLayout.CENTER);
 
-        fillFilterDayBox();
         return card;
     }
 
@@ -289,7 +290,7 @@ public class OvertimePanel extends JPanel {
     private void initFilterToLatestData() {
         int defYear = LocalDate.now().getYear();
         int defMonth = LocalDate.now().getMonthValue();
-        // Query SQL mencari tanggal MAX dari dua tabel
+        
         String sql = """
             SELECT year_col AS y, month_col AS m FROM (
               SELECT MAX(CONCAT(LPAD(year,4,'0'),LPAD(month,2,'0'))) AS ym, MAX(year) AS year_col, MAX(month) AS month_col
@@ -319,20 +320,9 @@ public class OvertimePanel extends JPanel {
             try {
                 filterYearBox.setSelectedItem(fy);
                 filterMonthBox.setSelectedItem(fm);
-                fillFilterDayBox();
+                loadTableData(); // Direct load
             } catch (Exception ignored) {}
         });
-    }
-
-    private void fillFilterDayBox() {
-        int year = (int) filterYearBox.getSelectedItem();
-        int month = (int) filterMonthBox.getSelectedItem();
-        DefaultComboBoxModel<String> m = new DefaultComboBoxModel<>();
-        m.addElement("All");
-        int days = YearMonth.of(year, month).lengthOfMonth();
-        for (int d = 1; d <= days; d++) m.addElement(String.valueOf(d));
-        filterDayBox.setModel(m);
-        filterDayBox.setSelectedItem("All");
     }
 
     private void fillInputDayBox() {
@@ -349,9 +339,18 @@ public class OvertimePanel extends JPanel {
         tableModel.setRowCount(0);
         int year = (int) filterYearBox.getSelectedItem();
         int month = (int) filterMonthBox.getSelectedItem();
+        String sortMode = (String) sortBox.getSelectedItem();
         
         try {
             List<Employee> employees = repo.findAll();
+            
+            // [BARU] Logic Sorting
+            if ("Nama".equals(sortMode)) {
+                employees.sort((e1, e2) -> e1.getName().compareToIgnoreCase(e2.getName()));
+            } else {
+                employees.sort(Comparator.comparingInt(Employee::getId));
+            }
+
             for (Employee e : employees) {
                 double weekdayHours = 0.0;
                 double weekendHours = 0.0;
