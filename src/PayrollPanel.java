@@ -1,382 +1,308 @@
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import java.util.ArrayList;
 import java.util.List;
 import javax.swing.*;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
 /**
- * PayrollPanel - menampilkan total sesuai baris yang tampil (filtered)
- *
- * Reference image (local): sandbox:/mnt/data/79fc5df4-99ea-4347-ba16-57aadbfc275f.png
+ * PayrollPanel - Final Version.
+ * - Logic perhitungan & akses DB dipindah ke Service/Repo.
+ * - UI hanya bertugas menampilkan data (View).
+ * - UPDATE: Tidak menampilkan karyawan dengan gaji 0.
  */
 public class PayrollPanel extends JPanel {
     private JComboBox<Integer> yearBox;
     private JComboBox<Integer> monthBox;
-
-    // filter dropdowns
-    private JComboBox<String> typeCombo;       // All / FULLTIME / PARTTIME
-    private JComboBox<String> golonganCombo;   // All / 1..4
-    private JComboBox<String> overtimeCombo;   // All / Has Overtime / No Overtime
-
+    private JComboBox<String> typeCombo;
+    private JComboBox<String> golonganCombo;
+    private JLabel golLbl;
     private DefaultTableModel model;
     private JLabel totalAllLabel;
-
+    
     private final PayrollService payrollService = new PayrollService();
+    private final EmployeeRepository empRepo = new EmployeeRepository();
+
+    private boolean isInitializing = true;
+    private String currentAdminName = "admin"; 
 
     public PayrollPanel() {
         setLayout(new BorderLayout());
-        setBackground(new Color(0xF3F3F3));
+        UIConstants.stylePanelBackground(this);
+        setBorder(BorderFactory.createEmptyBorder(10, 10, 5, 10)); 
 
-        // Top area: back button left, period controls centered
-        JPanel topContainer = new JPanel(new BorderLayout());
-        topContainer.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
-        topContainer.setBackground(new Color(0xF3F3F3));
+        JPanel main = new JPanel(new GridBagLayout());
+        main.setOpaque(false);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.BOTH;
+        gbc.weighty = 1.0; 
 
-        // Back button top-left
-        JButton back = new JButton("Kembali");
-        back.addActionListener(a -> MainApp.setPanel(new LandingPanel()));
-        JPanel backWrap = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        backWrap.setOpaque(false);
-        backWrap.add(back);
-        topContainer.add(backWrap, BorderLayout.WEST);
+        // --- LEFT CARD ---
+        JPanel leftCard = new JPanel(new GridBagLayout()) {
+            private final Image bg = new ImageIcon("assets/img/bg_payroll_filter.png").getImage();
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (bg != null) g.drawImage(bg, 0, 0, getWidth(), getHeight(), this);
+            }
+        };
+        UIConstants.styleCardPanel(leftCard);
+        
+        JPanel formPanel = new JPanel(new GridBagLayout());
+        formPanel.setOpaque(false); 
+        GridBagConstraints fc = new GridBagConstraints();
+        fc.insets = new Insets(8, 5, 8, 5);
+        fc.fill = GridBagConstraints.HORIZONTAL;
+        fc.anchor = GridBagConstraints.WEST;
+        int row = 0;
 
-        // Centered period controls
-        JPanel centerPeriodWrap = new JPanel();
-        centerPeriodWrap.setOpaque(false);
-        centerPeriodWrap.setLayout(new BoxLayout(centerPeriodWrap, BoxLayout.Y_AXIS));
+        JLabel filterTitle = new JLabel("Filter Parameter", SwingConstants.CENTER);
+        filterTitle.setFont(UIConstants.SUBHEADER_FONT);
+        fc.gridx = 0; fc.gridy = row; fc.gridwidth = 2; 
+        fc.insets = new Insets(0, 0, 20, 0); 
+        formPanel.add(filterTitle, fc);
+        row++;
+        fc.insets = new Insets(8, 5, 8, 5); fc.gridwidth = 1;
 
-        JLabel title = new JLabel("Batch Payroll", SwingConstants.CENTER);
-        title.setFont(new Font("Impact", Font.BOLD, 34));
-        title.setAlignmentX(Component.CENTER_ALIGNMENT);
-        centerPeriodWrap.add(title);
-
-        centerPeriodWrap.add(Box.createRigidArea(new Dimension(0,8)));
-
-        JPanel periodPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
-        periodPanel.setOpaque(false);
-        periodPanel.add(new JLabel("Tahun:"));
+        // Input Tahun
+        fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
+        JLabel tahunLbl = new JLabel("Tahun:"); UIConstants.applyBodyLabel(tahunLbl);
+        formPanel.add(tahunLbl, fc);
+        fc.gridx = 1; fc.weightx = 1.0;
         yearBox = new JComboBox<>();
         for (int y = 2020; y <= 2035; y++) yearBox.addItem(y);
         yearBox.setSelectedItem(java.time.LocalDate.now().getYear());
-        periodPanel.add(yearBox);
+        yearBox.setFont(UIConstants.BODY_FONT);
+        yearBox.addActionListener(e -> { if (!isInitializing) loadPayroll(); });
+        formPanel.add(yearBox, fc);
+        row++;
 
-        periodPanel.add(new JLabel("Bulan:"));
+        // Input Bulan
+        fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
+        JLabel bulanLbl = new JLabel("Bulan:"); UIConstants.applyBodyLabel(bulanLbl);
+        formPanel.add(bulanLbl, fc);
+        fc.gridx = 1; fc.weightx = 1.0;
         monthBox = new JComboBox<>();
         for (int m = 1; m <= 12; m++) monthBox.addItem(m);
         monthBox.setSelectedItem(java.time.LocalDate.now().getMonthValue());
-        periodPanel.add(monthBox);
-
-        JButton loadBtn = new JButton("Muat Data");
-        loadBtn.addActionListener(a -> loadPayroll());
-        periodPanel.add(loadBtn);
-
-        periodPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        centerPeriodWrap.add(periodPanel);
-
-        topContainer.add(centerPeriodWrap, BorderLayout.CENTER);
-
-        // right area (empty)
-        JPanel rightWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        rightWrap.setOpaque(false);
-        topContainer.add(rightWrap, BorderLayout.EAST);
-
-        add(topContainer, BorderLayout.NORTH);
-
-        // Main center: left parameter filters, center table
-        JPanel main = new JPanel(new BorderLayout());
-        main.setOpaque(false);
-
-        // Left filters panel
-        JPanel leftFilters = new JPanel();
-        leftFilters.setPreferredSize(new Dimension(360, 200));
-        leftFilters.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createEmptyBorder(10,10,10,10),
-                BorderFactory.createLineBorder(Color.LIGHT_GRAY)
-        ));
-        leftFilters.setLayout(new GridBagLayout());
-        leftFilters.setBackground(new Color(0xFFFFFF));
-
-        GridBagConstraints c = new GridBagConstraints();
-        c.insets = new Insets(8,8,8,8);
-        c.anchor = GridBagConstraints.WEST;
-        c.fill = GridBagConstraints.HORIZONTAL;
-        int row = 0;
-
-        JLabel filterTitle = new JLabel("Filter Parameter");
-        filterTitle.setFont(new Font("SansSerif", Font.BOLD, 16));
-        c.gridx = 0; c.gridy = row; c.gridwidth = 2;
-        leftFilters.add(filterTitle, c);
+        monthBox.setFont(UIConstants.BODY_FONT);
+        monthBox.addActionListener(e -> { if (!isInitializing) loadPayroll(); });
+        formPanel.add(monthBox, fc);
         row++;
 
-        c.gridwidth = 1;
-        c.gridx = 0; c.gridy = row;
-        leftFilters.add(new JLabel("Tipe:"), c);
+        fc.gridx = 0; fc.gridy = row; fc.gridwidth = 2;
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)), fc);
+        row++; fc.gridwidth = 1;
+
+        // Input Tipe
+        fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
+        JLabel tipeLbl = new JLabel("Tipe:"); UIConstants.applyBodyLabel(tipeLbl);
+        formPanel.add(tipeLbl, fc);
+        fc.gridx = 1; fc.weightx = 1.0;
         typeCombo = new JComboBox<>(new String[]{"All", "FULLTIME", "PARTTIME"});
-        c.gridx = 1;
-        leftFilters.add(typeCombo, c);
+        typeCombo.setFont(UIConstants.BODY_FONT);
+        typeCombo.addActionListener(e -> { if (!isInitializing) { updateFilterVisibility(); loadPayroll(); } });
+        formPanel.add(typeCombo, fc);
         row++;
 
-        c.gridx = 0; c.gridy = row;
-        leftFilters.add(new JLabel("Golongan:"), c);
+        // Input Golongan
+        fc.gridx = 0; fc.gridy = row; fc.weightx = 0.0;
+        golLbl = new JLabel("Golongan:"); UIConstants.applyBodyLabel(golLbl);
+        formPanel.add(golLbl, fc);
+        fc.gridx = 1; fc.weightx = 1.0;
         golonganCombo = new JComboBox<>(new String[]{"All", "1", "2", "3", "4"});
-        c.gridx = 1;
-        leftFilters.add(golonganCombo, c);
+        golonganCombo.setFont(UIConstants.BODY_FONT);
+        golonganCombo.addActionListener(e -> { if (!isInitializing) loadPayroll(); });
+        formPanel.add(golonganCombo, fc);
         row++;
 
-        c.gridx = 0; c.gridy = row;
-        leftFilters.add(new JLabel("Punya Lembur:"), c);
-        overtimeCombo = new JComboBox<>(new String[]{"All", "Has Overtime", "No Overtime"});
-        c.gridx = 1;
-        leftFilters.add(overtimeCombo, c);
-        row++;
+        leftCard.add(formPanel);
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.25; 
+        gbc.insets = new Insets(0, 0, 0, 15);
+        main.add(leftCard, gbc);
 
-        JButton applyBtn = new JButton("Apply");
-        applyBtn.addActionListener(a -> loadPayroll());
-        c.gridx = 0; c.gridy = row; c.gridwidth = 2;
-        leftFilters.add(applyBtn, c);
-        row++;
+        // --- RIGHT CARD ---
+        JPanel rightCard = new JPanel(new BorderLayout()) {
+            private final Image bg = new ImageIcon("assets/img/bg_table.png").getImage();
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                if (bg != null) g.drawImage(bg, 0, 0, getWidth(), getHeight(), this);
+            }
+        };
+        UIConstants.styleCardPanel(rightCard);
+        
+        JLabel tableHeader = new JLabel("Daftar Gaji Pending (Karyawan Aktif)", SwingConstants.LEFT);
+        tableHeader.setFont(UIConstants.BOLD_BODY_FONT);
+        tableHeader.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+        rightCard.add(tableHeader, BorderLayout.NORTH);
 
-        main.add(leftFilters, BorderLayout.WEST);
-
-        // Table center
-        model = new DefaultTableModel(new String[]{"ID","Nama","Tipe","Golongan","Base","Overtime","Total","Status"}, 0) {
+        model = new DefaultTableModel(new String[]{"ID", "Nama", "Tipe", "Gol", "Base", "Overtime", "Hari", "Rate", "Total"}, 0) {
             @Override public boolean isCellEditable(int row, int col) { return false; }
         };
         JTable table = new JTable(model);
-        table.setRowHeight(26);
-        JScrollPane sc = new JScrollPane(table);
-        main.add(sc, BorderLayout.CENTER);
+        UIConstants.styleTable(table);
+        
+        table.setOpaque(false);
+        ((DefaultTableCellRenderer)table.getDefaultRenderer(Object.class)).setOpaque(false);
+        table.setShowGrid(true);
 
+        table.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS); 
+        UIConstants.setColumnWidths(table, 40, 150, 70, 40, 90, 80, 50, 80, 100);
+        table.setRowHeight(UIConstants.TABLE_ROW_HEIGHT);
+        table.setFillsViewportHeight(true);
+        
+        JScrollPane sc = new JScrollPane(table);
+        sc.setBorder(BorderFactory.createEmptyBorder());
+        sc.setOpaque(false); sc.getViewport().setOpaque(false);
+        
+        rightCard.add(sc, BorderLayout.CENTER);
+
+        gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 0.75; 
+        gbc.insets = new Insets(0, 0, 0, 0);
+        main.add(rightCard, gbc);
         add(main, BorderLayout.CENTER);
 
-        // Footer: left (total) and right (pay buttons)
+        // FOOTER
         JPanel footer = new JPanel(new BorderLayout());
-        footer.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
-        footer.setBackground(new Color(0xF6F6F6));
-
-        // Left: total label
+        footer.setBorder(BorderFactory.createEmptyBorder(10, 5, 5, 5)); 
+        footer.setOpaque(false);
+        
         JPanel totalPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         totalPanel.setOpaque(false);
-        totalAllLabel = new JLabel("Total Semua Gaji: Rp 0");
-        totalAllLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
+        totalAllLabel = new JLabel("Total Gaji: " + UIConstants.formatRupiah(0));
+        totalAllLabel.setFont(UIConstants.HEADER_FONT.deriveFont(Font.PLAIN, 20f)); 
+        totalAllLabel.setForeground(UIConstants.NAVY);
         totalPanel.add(totalAllLabel);
+        
         footer.add(totalPanel, BorderLayout.WEST);
-
-        // Right: pay buttons
-        JPanel payPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        
+        JPanel payPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         payPanel.setOpaque(false);
-
-        JButton payVisibleBtn = new JButton("Bayarkan yang Tampil");
-        payVisibleBtn.addActionListener(a -> confirmAndPayVisible());
-        payPanel.add(payVisibleBtn);
-
-        JButton payAllBtn = new JButton("Bayarkan Semua");
-        payAllBtn.addActionListener(a -> confirmAndPayAll());
-        payPanel.add(payAllBtn);
-
+        JButton payBtn = new JButton("Bayarkan");
+        UIConstants.stylePrimaryButton(payBtn);
+        payBtn.addActionListener(a -> confirmAndPayVisible());
+        payPanel.add(payBtn);
+        
         footer.add(payPanel, BorderLayout.EAST);
-
         add(footer, BorderLayout.SOUTH);
 
-        // initial load
+        updateFilterVisibility(); 
+        isInitializing = false;
         loadPayroll();
     }
+    
+    public void setCurrentAdminName(String adminName) {
+        this.currentAdminName = adminName;
+    }
 
-    // loads payroll rows and apply filter dropdowns
+    private void updateFilterVisibility() {
+        String selectedType = (String) typeCombo.getSelectedItem();
+        boolean isFullTime = "FULLTIME".equalsIgnoreCase(selectedType);
+        golLbl.setEnabled(isFullTime);
+        golonganCombo.setEnabled(isFullTime);
+        if (!isFullTime && !"All".equals(golonganCombo.getSelectedItem())) {
+            golonganCombo.setSelectedItem("All"); 
+        }
+    }
+
     private void loadPayroll() {
         model.setRowCount(0);
+        
+        // Reset Total setiap kali load ulang
+        totalAllLabel.setText("Total Gaji: " + UIConstants.formatRupiah(0));
+        
+        if (yearBox.getSelectedItem() == null || monthBox.getSelectedItem() == null) return;
+        
         int year = (int) yearBox.getSelectedItem();
         int month = (int) monthBox.getSelectedItem();
-
+        
         String typeFilter = (String) typeCombo.getSelectedItem();
         String golFilter = (String) golonganCombo.getSelectedItem();
-        String otFilter = (String) overtimeCombo.getSelectedItem();
+        
+        long totalPendingDisplayed = 0L;
 
-        long totalDisplayed = 0L;
         try {
             List<PayrollService.PayrollRow> rows = payrollService.calculateAll(year, month);
-            for (PayrollService.PayrollRow r : rows) {
-                int gol = fetchGolongan(r.id);
-                boolean okType = typeFilter.equals("All") || r.type.equalsIgnoreCase(typeFilter);
-                boolean okGol = golFilter.equals("All") || String.valueOf(gol).equals(golFilter);
-                boolean okOT;
-                if (otFilter.equals("All")) okOT = true;
-                else if (otFilter.equals("Has Overtime")) okOT = r.overtime > 0;
-                else okOT = r.overtime == 0;
+            double partTimeRate = empRepo.getPartTimeDailyRate();
 
-                if (okType && okGol && okOT) {
-                    int totalInt = (int) r.total;
+            for (PayrollService.PayrollRow r : rows) {
+                // 1. Cek Status
+                String status = payrollService.getPayrollStatus(r.id, year, month);
+                if ("PAID".equalsIgnoreCase(status)) continue; 
+
+                // 2. Filter Gaji > 0 (Hanya tampilkan jika ada yang perlu dibayar)
+                if (r.total <= 0) continue;
+
+                // 3. Filter UI
+                Integer gol = payrollService.getGolonganForEmployee(r.id);
+                boolean okType = typeFilter.equals("All") || r.type.equalsIgnoreCase(typeFilter);
+                boolean okGol = golFilter.equals("All") || (gol != null && String.valueOf(gol).equals(golFilter));
+
+                if (okType && okGol) {
+                    long totalRounded = Math.round(r.total);
+                    String hariStr = "-";
+                    String rateStr = "-";
+                    
+                    if ("PARTTIME".equalsIgnoreCase(r.type)) {
+                        hariStr = String.valueOf(r.daysWorked);
+                        rateStr = UIConstants.formatRupiah(partTimeRate);
+                    }
+                    
                     model.addRow(new Object[]{
-                            r.id,
-                            r.name,
-                            r.type,
-                            gol,
-                            (int) r.base,
-                            (int) r.overtime,
-                            totalInt,
-                            getPayrollStatus(r.id, year, month)
+                            r.id, r.name, r.type, (gol == null ? "-" : gol),
+                            UIConstants.formatRupiah(r.base), 
+                            UIConstants.formatRupiah(r.overtime),
+                            hariStr, rateStr, 
+                            UIConstants.formatRupiah(totalRounded)
                     });
-                    totalDisplayed += totalInt;
+                    
+                    totalPendingDisplayed += totalRounded;
                 }
             }
-            // **Important change**: set label to total of rows displayed (filtered)
-            totalAllLabel.setText("Total Semua Gaji: Rp " + formatLong(totalDisplayed));
+            
+            // Update Label Total
+            totalAllLabel.setText("Total Gaji: " + UIConstants.formatRupiah(totalPendingDisplayed));
+            
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Error load payroll: " + e.getMessage());
+            JOptionPane.showMessageDialog(this, "Error load: " + e.getMessage()); 
             e.printStackTrace();
         }
     }
 
-    // helper to read golongan from employees table
-    private int fetchGolongan(int empId) {
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT golongan FROM employees WHERE id = ?")) {
-            ps.setInt(1, empId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return rs.getInt(1);
-            }
-        } catch (Exception e) {
-            // ignore and return 0
-        }
-        return 0;
-    }
-
-    // helper to get status from payrolls table if exists
-    private String getPayrollStatus(int empId, int year, int month) {
-        try (Connection conn = DB.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT status FROM payrolls WHERE employee_id=? AND year=? AND month=?")) {
-            ps.setInt(1, empId);
-            ps.setInt(2, year);
-            ps.setInt(3, month);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return rs.getString(1);
-            }
-        } catch (Exception e) { }
-        return "PENDING";
-    }
-
-    // show confirmation for visible rows, then pay if confirmed
     private void confirmAndPayVisible() {
         int rowCount = model.getRowCount();
         if (rowCount == 0) {
-            JOptionPane.showMessageDialog(this, "Tidak ada karyawan yang tampil untuk dibayarkan.");
-            return;
+            JOptionPane.showMessageDialog(this, "Tidak ada data gaji yang perlu dibayar (Total > 0)."); return;
         }
-
+        
         int year = (int) yearBox.getSelectedItem();
         int month = (int) monthBox.getSelectedItem();
-
-        // compute total and build detail summary
-        long total = 0L;
-        StringBuilder details = new StringBuilder();
-        details.append("Rincian pembayaran untuk ").append(rowCount).append(" karyawan:\n\n");
+        
+        long totalToPay = 0L;
+        List<Integer> idsToPay = new ArrayList<>();
+        
         for (int i = 0; i < rowCount; i++) {
             int id = (int) model.getValueAt(i, 0);
-            String name = (String) model.getValueAt(i, 1);
-            int t = ((Number) model.getValueAt(i, 6)).intValue();
-            total += t;
-            details.append(id).append(" - ").append(name).append(": Rp ").append(formatLong(t)).append("\n");
-            if (i >= 20) { details.append("...\n"); break; }
+            String totalStr = (String) model.getValueAt(i, 8);
+            String raw = totalStr.replaceAll("[^0-9]", ""); 
+            long t = 0;
+            if (!raw.isEmpty()) t = Long.parseLong(raw);
+            totalToPay += t;
+            idsToPay.add(id);
         }
-        details.append("\nTotal: Rp ").append(formatLong((int) total)).append("\n\nLanjutkan pembayaran?");
-
-        int confirm = JOptionPane.showConfirmDialog(this, new JScrollPane(new JTextArea(details.toString())), "Konfirmasi Pembayaran", JOptionPane.YES_NO_OPTION);
+        
+        String msg = "Bayar " + idsToPay.size() + " karyawan aktif?\nTotal: " + UIConstants.formatRupiah(totalToPay);
+        int confirm = JOptionPane.showConfirmDialog(this, msg, "Konfirmasi Pembayaran", JOptionPane.YES_NO_OPTION);
+        
         if (confirm == JOptionPane.YES_OPTION) {
-            // execute payment
-            try (Connection conn = DB.getConnection()) {
-                for (int i = 0; i < rowCount; i++) {
-                    int id = (int) model.getValueAt(i, 0);
-                    double base = ((Number) model.getValueAt(i, 4)).doubleValue();
-                    double overtime = ((Number) model.getValueAt(i, 5)).doubleValue();
-                    double tot = ((Number) model.getValueAt(i, 6)).doubleValue();
-
-                    PreparedStatement ps = conn.prepareStatement(
-                            "INSERT INTO payrolls(employee_id,year,month,base_salary,overtime_pay,total_salary,status) " +
-                                    "VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE base_salary=VALUES(base_salary), overtime_pay=VALUES(overtime_pay), total_salary=VALUES(total_salary), status=VALUES(status)"
-                    );
-                    ps.setInt(1, id);
-                    ps.setInt(2, year);
-                    ps.setInt(3, month);
-                    ps.setDouble(4, base);
-                    ps.setDouble(5, overtime);
-                    ps.setDouble(6, tot);
-                    ps.setString(7, "PAID");
-                    ps.executeUpdate();
-                }
-            } catch (Exception e) {
-                JOptionPane.showMessageDialog(this, "Error saat membayar: " + e.getMessage());
-                e.printStackTrace();
-            }
-            // reload
-            loadPayroll();
-            JOptionPane.showMessageDialog(this, "Pembayaran selesai.");
-        }
-    }
-
-    // show confirmation for ALL employees, then pay all if confirmed
-    private void confirmAndPayAll() {
-        int year = (int) yearBox.getSelectedItem();
-        int month = (int) monthBox.getSelectedItem();
-
-        try {
-            List<PayrollService.PayrollRow> rows = payrollService.calculateAll(year, month);
-            if (rows.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Tidak ada karyawan untuk dibayarkan.");
-                return;
-            }
-            long total = 0;
-            StringBuilder details = new StringBuilder();
-            details.append("Rincian pembayaran untuk SEMUA (").append(rows.size()).append(") karyawan:\n\n");
-            for (int i = 0; i < rows.size(); i++) {
-                PayrollService.PayrollRow r = rows.get(i);
-                total += (long) r.total;
-                details.append(r.id).append(" - ").append(r.name).append(": Rp ").append(formatLong((int) r.total)).append("\n");
-                if (i >= 20) { details.append("...\n"); break; }
-            }
-            details.append("\nTotal: Rp ").append(formatLong((int) total)).append("\n\nLanjutkan pembayaran SEMUA?");
-
-            int confirm = JOptionPane.showConfirmDialog(this, new JScrollPane(new JTextArea(details.toString())), "Konfirmasi Pembayaran Semua", JOptionPane.YES_NO_OPTION);
-            if (confirm == JOptionPane.YES_OPTION) {
-                try (Connection conn = DB.getConnection()) {
-                    for (PayrollService.PayrollRow r : rows) {
-                        PreparedStatement ps = conn.prepareStatement(
-                                "INSERT INTO payrolls(employee_id,year,month,base_salary,overtime_pay,total_salary,status) " +
-                                        "VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE base_salary=VALUES(base_salary), overtime_pay=VALUES(overtime_pay), total_salary=VALUES(total_salary), status=VALUES(status)"
-                        );
-                        ps.setInt(1, r.id);
-                        ps.setInt(2, year);
-                        ps.setInt(3, month);
-                        ps.setDouble(4, r.base);
-                        ps.setDouble(5, r.overtime);
-                        ps.setDouble(6, r.total);
-                        ps.setString(7, "PAID");
-                        ps.executeUpdate();
-                    }
-                }
+            try {
+                int paid = payrollService.paySelected(idsToPay, year, month, currentAdminName, "MANUAL", "");
+                JOptionPane.showMessageDialog(this, "Berhasil bayar " + paid + " karyawan.");
                 loadPayroll();
-                JOptionPane.showMessageDialog(this, "Semua karyawan telah dibayarkan.");
-            }
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Error membayar semua: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    // small helper to pretty-print integer (dot for thousand separators)
-    private String formatLong(long v) {
-        String s = Long.toString(v);
-        StringBuilder out = new StringBuilder();
-        int cnt = 0;
-        for (int i = s.length() - 1; i >= 0; i--) {
-            out.append(s.charAt(i));
-            cnt++;
-            if (cnt == 3 && i != 0) {
-                out.append('.');
-                cnt = 0;
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this, "Error: " + e.getMessage()); e.printStackTrace();
             }
         }
-        return out.reverse().toString();
     }
 }
