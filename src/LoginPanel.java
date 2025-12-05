@@ -1,6 +1,5 @@
 import java.awt.*;
 import java.sql.*;
-import java.util.concurrent.ExecutionException;
 import javax.swing.*;
 
 public class LoginPanel extends JPanel {
@@ -65,8 +64,8 @@ public class LoginPanel extends JPanel {
         loginBtn = new JButton("Login");
         UIConstants.stylePrimaryButton(loginBtn);
         
-        // Action Listener
-        loginBtn.addActionListener(a -> doLoginWithThread());
+        // Action Listener (Langsung panggil doLogin)
+        loginBtn.addActionListener(a -> doLogin());
         
         cc.gridx = 0; cc.gridy = row; cc.gridwidth = 2; cc.weightx = 0.0; cc.anchor = GridBagConstraints.CENTER;
         card.add(loginBtn, cc);
@@ -76,15 +75,14 @@ public class LoginPanel extends JPanel {
     }
 
     /**
-     * Override addNotify:
-     * Method ini dipanggil otomatis oleh Java saat Panel ditambahkan ke JFrame (Window).
+     * Set Default Button saat panel ditampilkan
      */
     @Override
     public void addNotify() {
         super.addNotify();
         JRootPane rootPane = SwingUtilities.getRootPane(this);
         if (rootPane != null) {
-            rootPane.setDefaultButton(loginBtn); // ENTER key trigger login
+            rootPane.setDefaultButton(loginBtn); 
         }
     }
 
@@ -96,7 +94,7 @@ public class LoginPanel extends JPanel {
         }
     }
 
-    private void doLoginWithThread() {
+    private void doLogin() {
         String user = userField.getText().trim();
         String pass = new String(passField.getPassword());
 
@@ -105,58 +103,33 @@ public class LoginPanel extends JPanel {
             return;
         }
 
-        // 1. UI Preparation (EDT)
-        loginBtn.setEnabled(false);
-        loginBtn.setText("Authenticating...");
-        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        // Logic Database Langsung (Tanpa Thread)
+        try (Connection conn = DB.getConnection()) {
+            PreparedStatement ps = conn.prepareStatement(
+                    "SELECT username FROM users WHERE username=? AND password=?");
+            ps.setString(1, user);
+            ps.setString(2, pass);
 
-        // 2. Background Task
-        SwingWorker<String, Void> worker = new SwingWorker<>() {
-            @Override
-            protected String doInBackground() throws Exception {
-                try (Connection conn = DB.getConnection()) {
-                    PreparedStatement ps = conn.prepareStatement(
-                            "SELECT username FROM users WHERE username=? AND password=?");
-                    ps.setString(1, user);
-                    ps.setString(2, pass);
-
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (rs.next()) {
-                            return rs.getString("username");
-                        }
-                    }
-                }
-                return null;
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    String adminName = get(); 
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    String adminName = rs.getString("username");
                     
-                    if (adminName != null) {
-                        LandingPanel landing = new LandingPanel();
-                        landing.setAdminName(adminName);
-                        Main.setPanel(landing, "Home");
-                    } else {
-                        JOptionPane.showMessageDialog(LoginPanel.this, 
-                            "Username atau password salah!", "Login Failed", JOptionPane.ERROR_MESSAGE);
-                        passField.setText("");
-                        passField.requestFocus();
-                    }
+                    // Pindah ke Landing Panel
+                    LandingPanel landing = new LandingPanel();
+                    landing.setAdminName(adminName);
+                    Main.setPanel(landing, "Home");
                     
-                } catch (InterruptedException | ExecutionException e) {
-                    JOptionPane.showMessageDialog(LoginPanel.this, 
-                        "Database Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-                    e.printStackTrace();
-                } finally {
-                    loginBtn.setEnabled(true);
-                    loginBtn.setText("Login");
-                    setCursor(Cursor.getDefaultCursor());
+                } else {
+                    JOptionPane.showMessageDialog(this, 
+                        "Username atau password salah!", "Login Failed", JOptionPane.ERROR_MESSAGE);
+                    passField.setText("");
+                    passField.requestFocus();
                 }
             }
-        };
-
-        worker.execute(); 
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, 
+                "Database Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            e.printStackTrace();
+        }
     }
 }
