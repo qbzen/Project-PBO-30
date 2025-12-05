@@ -4,6 +4,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Types;
 import java.time.YearMonth;
+import java.util.Comparator;
 import java.util.List;
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -12,18 +13,21 @@ import javax.swing.table.DefaultTableModel;
 /**
  * EmployeePanel - Updated Logic
  * - Toggle Status hanya input Nama (ID otomatis dicari).
- * - Tombol berubah warna dinamis setelah Cek Nama.
+ * - [BARU] Tambah Dropdown Sort ID/Nama di atas tabel.
  */
 public class EmployeePanel extends JPanel {
 
     private DefaultTableModel tableModel;
     private JTable table;
 
-    // Filter Components (Left)
+    // Filter Components (Left - Bottom)
     private JComboBox<String> filterBox;
     private JComboBox<String> valueBox;
     private JTextField searchField;
     private JButton searchBtn;
+    
+    // Sort Component (Left - Top)
+    private JComboBox<String> sortBox; 
 
     // Input/Edit Components (Right)
     private JTextField nameField;
@@ -32,10 +36,10 @@ public class EmployeePanel extends JPanel {
     private JButton saveBtn;
 
     // Toggle Status Components (Bottom Right)
-    private JTextField statusNameField; // Ganti nama variabel agar jelas
+    private JTextField statusNameField; 
     private JButton checkStatusBtn;
     private JButton executeStatusBtn;
-    private int selectedIdForStatus = -1; // Menyimpan ID yang ditemukan
+    private int selectedIdForStatus = -1; 
 
     private final EmployeeRepository repo = new EmployeeRepository();
 
@@ -69,11 +73,41 @@ public class EmployeePanel extends JPanel {
         
         UIConstants.styleCardPanel(card);
 
+        // --- HEADER PANEL (Title + Sort) ---
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        headerPanel.setOpaque(false);
+        headerPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 5, 10));
+
+        // 1. Title
         JLabel title = new JLabel("Daftar Karyawan", SwingConstants.LEFT);
         UIConstants.applyHeaderLabel(title);
-        title.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        card.add(title, BorderLayout.NORTH);
+        headerPanel.add(title, BorderLayout.WEST);
 
+        // 2. Sort Controls (Right side)
+        JPanel sortPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        sortPanel.setOpaque(false);
+        
+        JLabel sortLbl = new JLabel("Sort:");
+        UIConstants.applyBodyLabel(sortLbl);
+        sortPanel.add(sortLbl);
+
+        sortBox = new JComboBox<>(new String[]{"ID", "Nama"});
+        sortBox.setFont(UIConstants.BODY_FONT);
+        // Listener: Cek kondisi UI untuk menentukan reload yang mana (Search/Filter/All)
+        sortBox.addActionListener(e -> {
+            String k = searchField.getText().trim();
+            boolean isFilterActive = valueBox.isEnabled() && valueBox.getSelectedItem() != null;
+            
+            if (!k.isEmpty()) doSearch();
+            else if (isFilterActive) doFilter();
+            else loadAll();
+        });
+        sortPanel.add(sortBox);
+
+        headerPanel.add(sortPanel, BorderLayout.EAST);
+        card.add(headerPanel, BorderLayout.NORTH);
+
+        // --- TABLE ---
         tableModel = new DefaultTableModel(new String[]{"ID","Nama","Tipe","Gol", "Status"}, 0) {
             @Override public boolean isCellEditable(int row, int column) { return false; }
         };
@@ -87,7 +121,6 @@ public class EmployeePanel extends JPanel {
         UIConstants.setColumnWidths(table, 50, 200, 100, 50, 80);
         table.setRowHeight(UIConstants.TABLE_ROW_HEIGHT);
 
-        // Update listener tabel untuk mengisi nama di form bawah juga
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             public void mouseClicked(java.awt.event.MouseEvent evt) {
                 int r = table.getSelectedRow();
@@ -104,7 +137,7 @@ public class EmployeePanel extends JPanel {
         sp.setBorder(BorderFactory.createEmptyBorder());
         card.add(sp, BorderLayout.CENTER);
 
-        // Filter Area
+        // --- FILTER AREA (Bottom) ---
         JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
         filters.setOpaque(false);
         
@@ -234,7 +267,7 @@ public class EmployeePanel extends JPanel {
         c.gridx = 1; card.add(nameCheckPanel, c);
         row++;
 
-        // Tombol Eksekusi (Awalnya disable, aktif setelah Cek)
+        // Tombol Eksekusi
         executeStatusBtn = new JButton("Cek Nama Dulu");
         UIConstants.styleSecondaryButton(executeStatusBtn);
         executeStatusBtn.setEnabled(false);
@@ -277,10 +310,22 @@ public class EmployeePanel extends JPanel {
         }
     }
 
+    // [BARU] Helper Sorting
+    private void sortList(List<Employee> list) {
+        if (sortBox == null) return;
+        String mode = (String) sortBox.getSelectedItem();
+        if ("Nama".equals(mode)) {
+            list.sort((e1, e2) -> e1.getName().compareToIgnoreCase(e2.getName()));
+        } else {
+            list.sort(Comparator.comparingInt(Employee::getId)); // Default ID
+        }
+    }
+
     private void loadAll() {
         tableModel.setRowCount(0);
         try {
             List<Employee> list = repo.findAll();
+            sortList(list); // Apply Sort
             for (Employee e : list) {
                 addEmployeeToTable(e);
             }
@@ -308,15 +353,13 @@ public class EmployeePanel extends JPanel {
             Employee e = repo.findById(id);
             if (e == null) return;
             
-            // Isi Form Input Atas
             nameField.setText(capitalizeEachWord(e.getName()));
             typeField.setSelectedItem(e.getEmploymentType());
             Integer gol = getGolonganNullable(id);
             golonganField.setSelectedItem(gol == null ? "-" : String.valueOf(gol));
             
-            // Isi Form Status Bawah (Otomatis isi nama dan set tombol)
             statusNameField.setText(capitalizeEachWord(e.getName()));
-            updateStatusButtonState(e); // Helper untuk update tombol
+            updateStatusButtonState(e); 
             
             updateTypeDependentFields();
         } catch (Exception e) { 
@@ -330,6 +373,8 @@ public class EmployeePanel extends JPanel {
         String v = valueBox.isEnabled() && valueBox.getSelectedItem() != null ? (String) valueBox.getSelectedItem() : null;
         try {
             List<Employee> list = repo.findAll();
+            sortList(list); // Apply Sort
+            
             for (Employee e : list) {
                 boolean show = true;
                 if ("Golongan".equalsIgnoreCase(f) && v != null) {
@@ -351,6 +396,8 @@ public class EmployeePanel extends JPanel {
         tableModel.setRowCount(0);
         try {
             List<Employee> list = repo.findAll();
+            sortList(list); // Apply Sort
+            
             for (Employee e : list) {
                 if (e.getName().toLowerCase().contains(k)) addEmployeeToTable(e);
             }
@@ -397,9 +444,8 @@ public class EmployeePanel extends JPanel {
             ps.setString(1, rawName.toLowerCase());
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    // --- UPDATE (Status tidak disentuh) ---
+                    // Update
                     int existingId = rs.getInt("id");
-                    
                     int c = JOptionPane.showConfirmDialog(this, 
                          "Nama karyawan sudah ada. Update data (Tipe/Golongan)?", 
                          "Konfirmasi Update", JOptionPane.YES_NO_OPTION);
@@ -418,14 +464,9 @@ public class EmployeePanel extends JPanel {
                 }
             }
 
-            // --- INSERT BARU (Menggunakan ID Manual) ---
-            // 1. Dapatkan ID terbesar + 1 dari Repository
+            // Insert
             int newId = repo.getNextEmployeeId();
-            
-            // 2. Insert menggunakan ID yang didapatkan
             repo.insertEmployee(newId, name, type, gol);
-            
-            // 3. Lanjutkan proses work record
             YearMonth now = YearMonth.now();
             repo.ensureWorkRecord(newId, now.getYear(), now.getMonthValue());
 
@@ -439,48 +480,38 @@ public class EmployeePanel extends JPanel {
         }
     }
 
-    // --- LOGIKA TOGGLE STATUS BERDASARKAN NAMA ---
-    
+    // --- LOGIKA TOGGLE STATUS ---
     private void checkStatusByName() {
         String name = statusNameField.getText().trim();
         if (name.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Masukkan nama karyawan dulu.");
             return;
         }
-
-        // Cari karyawan by name (ambil yang paling baru jika duplikat ID)
         String sql = "SELECT id FROM employees WHERE LOWER(name) = LOWER(?) ORDER BY id DESC LIMIT 1";
-        
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, name);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt("id");
-                    Employee e = repo.findById(id); // Ambil object lengkap
-                    updateStatusButtonState(e); // Update tombol warna/teks
+                    Employee e = repo.findById(id); 
+                    updateStatusButtonState(e); 
                 } else {
                     JOptionPane.showMessageDialog(this, "Karyawan tidak ditemukan.");
                     resetStatusButton();
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
-    // Helper untuk mengubah tampilan tombol berdasarkan status karyawan
     private void updateStatusButtonState(Employee e) {
         selectedIdForStatus = e.getId();
         executeStatusBtn.setEnabled(true);
-        
         if (e.isActive()) {
-            // Jika Aktif -> Tombol Merah (Matikan)
             executeStatusBtn.setText("Non-Aktifkan " + e.getName());
             executeStatusBtn.setBackground(UIConstants.DANGER);
             executeStatusBtn.setForeground(Color.WHITE);
         } else {
-            // Jika Non-Aktif -> Tombol Hijau (Hidupkan)
             executeStatusBtn.setText("Aktifkan " + e.getName());
             executeStatusBtn.setBackground(UIConstants.SUCCESS);
             executeStatusBtn.setForeground(Color.WHITE);
@@ -495,7 +526,6 @@ public class EmployeePanel extends JPanel {
 
     private void executeToggleStatus() {
         if (selectedIdForStatus == -1) return;
-
         try {
             Employee e = repo.findById(selectedIdForStatus);
             if (e == null) {
@@ -503,10 +533,8 @@ public class EmployeePanel extends JPanel {
                 resetStatusButton();
                 return;
             }
-
-            boolean newStatus = !e.isActive(); // Balik statusnya
+            boolean newStatus = !e.isActive(); 
             String action = newStatus ? "MENGAKTIFKAN" : "MENONAKTIFKAN";
-
             int confirm = JOptionPane.showConfirmDialog(this,
                 "Konfirmasi " + action + " karyawan: " + e.getName() + "?",
                 "Konfirmasi", JOptionPane.YES_NO_OPTION);
@@ -515,15 +543,10 @@ public class EmployeePanel extends JPanel {
                 repo.updateStatus(selectedIdForStatus, newStatus);
                 JOptionPane.showMessageDialog(this, "Status berhasil diubah.");
                 loadAll();
-                
-                // Refresh tombol status agar sesuai kondisi baru
                 Employee updated = repo.findById(selectedIdForStatus);
                 updateStatusButtonState(updated);
             }
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
+        } catch (Exception ex) { ex.printStackTrace(); }
     }
 
     private String capitalizeEachWord(String in) {
